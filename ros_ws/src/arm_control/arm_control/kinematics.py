@@ -28,8 +28,10 @@ def forward_kinematics(angles_deg):
     angles = np.radians(np.asarray(angles_deg, float)[:5])
     position = HOME_FINGERTIP.copy()
     direction = HOME_FINGER_DIRECTION.copy()
-    # TODO (forward kinematics): apply the five joint rotations to `position` and `direction`.
-    # Use rotate(), JOINT_POINTS and JOINT_AXES. See Assignment3/Kinematics/01_forward_kinematics.md.
+    # Apply rotations from wrist_roll back to shoulder_pan using the zero-pose axes.
+    for i in range(4, -1, -1):
+        position = JOINT_POINTS[i] + rotate(position - JOINT_POINTS[i], JOINT_AXES[i], angles[i])
+        direction = rotate(direction, JOINT_AXES[i], angles[i])
     return position, direction
 
 
@@ -48,7 +50,27 @@ def inverse_kinematics(target_position, target_direction, start_angles_deg, iter
     target_position = np.asarray(target_position, float)
     target_direction = np.asarray(target_direction, float) / np.linalg.norm(target_direction)
     angles = np.asarray(start_angles_deg, float)[:5].copy()
-    # TODO (inverse kinematics): change angles[:4] step by step until forward_kinematics(angles)
-    # matches the target position and direction. See Assignment3/Kinematics/02_inverse_kinematics.md.
+    goal = np.concatenate((target_position, direction_weight * target_direction))
+    angles[:4] = np.clip(angles[:4], JOINT_LIMITS_DEG[:4, 0], JOINT_LIMITS_DEG[:4, 1])
+    step = 1e-4  # radians; the Jacobian and DLS update use radians internally.
+
+    def task(joints):
+        position, direction = forward_kinematics(joints)
+        return np.concatenate((position, direction_weight * direction))
+
+    for _ in range(iterations):
+        current = task(angles)
+        error = goal - current
+        if np.linalg.norm(error) < 1e-6:
+            break
+        jacobian = np.empty((6, 4))
+        for j in range(4):
+            nudged = angles.copy()
+            nudged[j] += np.degrees(step)
+            jacobian[:, j] = (task(nudged) - current) / step
+        change = jacobian.T @ np.linalg.solve(
+            jacobian @ jacobian.T + damping**2 * np.eye(6), error)
+        angles[:4] += np.clip(np.degrees(change), -10.0, 10.0)
+        angles[:4] = np.clip(angles[:4], JOINT_LIMITS_DEG[:4, 0], JOINT_LIMITS_DEG[:4, 1])
     position_error = float(np.linalg.norm(target_position - forward_kinematics(angles)[0]))
     return angles, position_error

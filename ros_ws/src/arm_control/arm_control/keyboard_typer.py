@@ -16,7 +16,7 @@ from std_msgs.msg import Float64MultiArray, String
 from arm_control.kinematics import inverse_kinematics
 
 # Where the top of each key is, in the robot's base frame (metres). These values are for the
-# SIMULATED keyboard. For a real keyboard, measure your own and replace them.
+# SIMULATED keyboard. Real measurements belong in real_keyboard_positions.py.
 KEY_POSITIONS = {
     "a": [0.300, 0.070, -0.012],
     "s": [0.300, 0.000, -0.012],
@@ -37,9 +37,10 @@ class KeyboardTyper(Node):
         self.waypoints = []      # joint-angle targets still to visit, each a list of 6 numbers
         self.start = None        # where the current move started
         self.steps_done = 0
-        # TODO 1: create the publisher for "arm_commands" (self.publisher), subscribe to "key" (String,
-        # self.on_key) and "arm_state" (Float64MultiArray, self.on_arm_state), and create a timer that
-        # calls self.on_timer RATE_HZ times per second.
+        self.publisher = self.create_publisher(Float64MultiArray, "arm_commands", 10)
+        self.create_subscription(String, "key", self.on_key, 10)
+        self.create_subscription(Float64MultiArray, "arm_state", self.on_arm_state, 10)
+        self.create_timer(1.0 / RATE_HZ, self.on_timer)
         self.get_logger().info(f"KeyboardTyper started. Keys: {sorted(KEY_POSITIONS)}")
 
     def on_arm_state(self, msg):
@@ -56,17 +57,35 @@ class KeyboardTyper(Node):
         if self.arm_state is None:
             self.get_logger().warn("No arm_state received yet.")
             return
-        # TODO 2: build the plan for this key. Compute three fingertip targets (above the key, pressed,
-        # above again), solve inverse kinematics for each, starting each solve from the previous result,
-        # and store the three results (5 angles + GRIPPER_CLOSED each) in self.waypoints. Also set
-        # self.start to the current arm_state and self.steps_done to 0.
+        hover = np.array(KEY_POSITIONS[letter]) + [0.0, 0.0, HOVER_HEIGHT]
+        press = np.array(KEY_POSITIONS[letter]) - [0.0, 0.0, PRESS_DEPTH]
+        angles = self.arm_state
+        waypoints = []
+        for target in (hover, press, hover):
+            angles, error = inverse_kinematics(target, FINGER_DOWN, angles)
+            if not np.isfinite(error) or error > 0.005:
+                self.get_logger().warn(
+                    f"Key {letter!r} is out of reach (error {error * 1000:.1f} mm). Not moving.")
+                return
+            waypoints.append(angles.tolist() + [GRIPPER_CLOSED])
+        # Install the plan only after all three waypoints have passed the reachability check.
+        self.waypoints = waypoints
+        self.start = self.arm_state.copy()
+        self.steps_done = 0
+        self.get_logger().info(f"Typing {letter!r}")
 
     def on_timer(self):
         if not self.waypoints:
             return
-        # TODO 3: publish one command that lies between self.start and self.waypoints[0], so that the
-        # move takes MOVE_TIME seconds. When the waypoint is reached, remove it from the list and make
-        # it the new self.start.
+        self.steps_done += 1
+        fraction = min(self.steps_done / (MOVE_TIME * RATE_HZ), 1.0)
+        start = np.asarray(self.start)
+        target = np.asarray(self.waypoints[0])
+        command = start + (target - start) * fraction
+        self.publisher.publish(Float64MultiArray(data=command.tolist()))
+        if fraction >= 1.0:
+            self.start = self.waypoints.pop(0)
+            self.steps_done = 0
 
 
 def main():

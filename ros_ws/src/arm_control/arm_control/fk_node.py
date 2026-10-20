@@ -19,14 +19,19 @@ from arm_control.kinematics import forward_kinematics
 class ForwardKinematics(Node):
     def __init__(self):
         super().__init__("forward_kinematics")
-        # TODO 1: create a publisher for PoseStamped on "fk_pose" (keep it in self.publisher), and
-        # subscribe to "arm_state" (Float64MultiArray) with self.on_arm_state as the callback.
+        self.publisher = self.create_publisher(PoseStamped, "/fk_pose", 10)
+        self.create_subscription(Float64MultiArray, "/arm_state", self.on_arm_state, 10)
         self.get_logger().info("ForwardKinematics started.")
 
     def on_arm_state(self, msg):
         position, direction = forward_kinematics(msg.data)
-        # TODO 2: create a PoseStamped, set header.frame_id to "base", copy `position` into
-        # pose.position.x, .y and .z (as floats), and publish it.
+        pose = PoseStamped()
+        pose.header.frame_id = "base"
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = float(position[0])
+        pose.pose.position.y = float(position[1])
+        pose.pose.position.z = float(position[2])
+        self.publisher.publish(pose)
 
 
 def main():

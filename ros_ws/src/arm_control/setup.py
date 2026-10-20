@@ -23,6 +23,7 @@ setup(
             "forward_kinematics = arm_control.fk_node:main",
             "inverse_kinematics = arm_control.ik_node:main",
             "keyboard_typer = arm_control.keyboard_typer:main",
+            "pool_typer = arm_control.pool_typer:main",
         ],
     },
 )
